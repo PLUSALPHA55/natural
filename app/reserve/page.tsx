@@ -1,186 +1,321 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import TimeCalendar from "./components/TimeCalendar";
-import dayjs from "dayjs";
 
-// ===============================
-// コース
-// ===============================
-const courses = [
-  { id: "60", name: "60分", duration_minutes: 60, base_price: 14000 },
-  { id: "100", name: "100分", duration_minutes: 100, base_price: 20000 },
-  { id: "130", name: "130分", duration_minutes: 130, base_price: 23000 },
-];
+/**
+ * 型はざっくり any にしておく（DB の変更に強くするため）
+ */
+type Course = any;
+type Girl = any;
 
-// ===============================
-// キャスト
-// ===============================
-const girls = [
-  { id: "kana", name: "かな" },
-  { id: "asuka", name: "あすか" },
-  { id: "mayu", name: "まゆ" },
-];
+type TimeRange = {
+  start: number; // getTime()
+  end: number;
+};
 
 export default function ReservePage() {
-  const [step, setStep] = useState<"course" | "girl" | "datetime" | "confirm">("course");
+  const router = useRouter();
+  const params = useSearchParams();
 
-  const [selectedCourse, setSelectedCourse] = useState<any>(null);
-  const [selectedGirl, setSelectedGirl] = useState<any>(null);
+  const course_id = params.get("course_id");
+  const girl_id = params.get("girl_id");
 
-  const [reservedList, setReservedList] = useState<any[]>([]);
+  const [course, setCourse] = useState<Course | null>(null);
+  const [girl, setGirl] = useState<Girl | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const [selectedStart, setSelectedStart] = useState<string | null>(null);
-  const [selectedEnd, setSelectedEnd] = useState<string | null>(null);
+  const [shiftRanges, setShiftRanges] = useState<TimeRange[]>([]);
+  const [reservedRanges, setReservedRanges] = useState<TimeRange[]>([]);
 
-  // 🔥キャスト選択後に予約データ取得
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+
+  // -------------------------------
+  // 14日分の日付リスト（今日〜13日後）
+  // -------------------------------
+  const days = useMemo(() => {
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    return Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(base);
+      d.setDate(base.getDate() + i);
+      return d;
+    });
+  }, []);
+
+  // -------------------------------
+  // Supabase からコース / 女の子 / シフト / 予約 を取得
+  // -------------------------------
   useEffect(() => {
-    const loadReserved = async () => {
-      if (!selectedGirl) return;
-      const { data } = await supabase
-        .from("reservations")
-        .select("start_time, end_time")
-        .eq("girl_id", selectedGirl.id);
+    const load = async () => {
+      if (!course_id || !girl_id) {
+        setLoading(false);
+        return;
+      }
 
-      setReservedList(data || []);
+      // コース
+      const { data: courseData, error: courseErr } = await supabase
+        .from("courses")
+        .select("*")
+        .eq("id", course_id)
+        .maybeSingle();
+
+      if (courseErr) {
+        console.error("courses error", courseErr);
+      }
+
+      // 女の子
+      const { data: girlData, error: girlErr } = await supabase
+        .from("girls")
+        .select("*")
+        .eq("id", girl_id)
+        .maybeSingle();
+
+      if (girlErr) {
+        console.error("girls error", girlErr);
+      }
+
+      // シフト / 予約の期間（14日分）
+      const startDay = new Date();
+      startDay.setHours(0, 0, 0, 0);
+      const endDay = new Date(startDay);
+      endDay.setDate(endDay.getDate() + 14);
+      endDay.setHours(23, 59, 59, 999);
+
+      // シフト
+      const { data: shiftData, error: shiftErr } = await supabase
+        .from("shifts")
+        .select("*")
+        .eq("girl_id", girl_id)
+        .gte("start_time", startDay.toISOString())
+        .lte("end_time", endDay.toISOString());
+
+      if (shiftErr) {
+        console.error("shifts error", shiftErr);
+      }
+
+      // 予約（キャンセル以外すべてブロック扱い）
+      const { data: reservationData, error: resErr } = await supabase
+        .from("reservations")
+        .select("*")
+        .eq("girl_id", girl_id)
+        .gte("start_time", startDay.toISOString())
+        .lte("end_time", endDay.toISOString());
+
+      if (resErr) {
+        console.error("reservations error", resErr);
+      }
+
+      // 時間帯を number に変換しておく
+      const shiftRanges: TimeRange[] =
+        shiftData?.map((s: any) => ({
+          start: new Date(s.start_time).getTime(),
+          end: new Date(s.end_time).getTime(),
+        })) ?? [];
+
+      const reservedRanges: TimeRange[] =
+        reservationData?.map((r: any) => ({
+          start: new Date(r.start_time).getTime(),
+          end: new Date(r.end_time).getTime(),
+        })) ?? [];
+
+      setCourse(courseData ?? null);
+      setGirl(girlData ?? null);
+      setShiftRanges(shiftRanges);
+      setReservedRanges(reservedRanges);
+      setLoading(false);
     };
 
-    loadReserved();
-  }, [selectedGirl]);
+    load();
+  }, [course_id, girl_id]);
 
-  // 🔥予約送信
-  const sendReservation = async () => {
-    if (!selectedCourse || !selectedGirl || !selectedStart || !selectedEnd) {
-      alert("データ不足");
-      return;
-    }
-
-    const { error } = await supabase.from("reservations").insert({
-      course_id: selectedCourse.id,
-      course_name: selectedCourse.name,
-      price: selectedCourse.base_price,
-      girl_id: selectedGirl.id,
-      girl_name: selectedGirl.name,
-      start_time: selectedStart,
-      end_time: selectedEnd,
-      status: "pending",
-    });
-
-    if (error) {
-      alert("送信失敗");
-      return;
-    }
-
-    alert("予約を送信しました！");
+  // -------------------------------
+  // 共通ヘルパー
+  // -------------------------------
+  const weekdayLabel = (d: Date) => {
+    const arr = ["日", "月", "火", "水", "木", "金", "土"];
+    return arr[d.getDay()];
   };
 
+  const formatTime = (d: Date) => {
+    const hh = d.getHours().toString().padStart(2, "0");
+    const mm = d.getMinutes().toString().padStart(2, "0");
+    return `${hh}:${mm}`;
+  };
+
+  // 選択中の日付の 30分刻みスロットを生成（0:00〜23:30）
+  const slots = useMemo(() => {
+    const day = days[selectedDayIndex];
+    const start = new Date(day);
+    start.setHours(0, 0, 0, 0);
+
+    const result: Date[] = [];
+    for (let i = 0; i < 48; i++) {
+      const t = new Date(start.getTime() + i * 30 * 60 * 1000);
+      result.push(t);
+    }
+    return result;
+  }, [days, selectedDayIndex]);
+
+  // スロットの状態判定
+  const getSlotStatus = (slot: Date): "closed" | "booked" | "free" => {
+    const t = slot.getTime();
+
+    const inShift = shiftRanges.some(
+      (s) => t >= s.start && t < s.end
+    );
+
+    if (!inShift) return "closed";
+
+    const booked = reservedRanges.some(
+      (r) => t >= r.start && t < r.end
+    );
+
+    if (booked) return "booked";
+
+    return "free";
+  };
+
+  const handleClickSlot = (slot: Date) => {
+    if (!course || !course_id || !girl_id) return;
+
+    // コース時間（分）※なければ 60分扱い
+    const durationMinutes: number = course.duration_minutes ?? course.minutes ?? 60;
+
+    const start = slot;
+    const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+
+    const startIso = start.toISOString();
+    const endIso = end.toISOString();
+
+    router.push(
+      `/reserve/confirm?course_id=${course_id}&girl_id=${girl_id}&start=${encodeURIComponent(
+        startIso
+      )}&end=${encodeURIComponent(endIso)}`
+    );
+  };
+
+  // -------------------------------
+  // レンダリング
+  // -------------------------------
+  if (loading) {
+    return <div className="p-6">読み込み中...</div>;
+  }
+
+  if (!course_id || !girl_id || !course || !girl) {
+    return (
+      <div className="p-6">
+        <h1 className="text-xl font-bold mb-2">予約情報が不足しています。</h1>
+        <p className="text-gray-600 text-sm">
+          コースまたはセラピストの情報が取得できませんでした。
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <main className="p-6 max-w-3xl mx-auto">
+    <div className="p-4 max-w-3xl mx-auto">
+      {/* 見出し */}
+      <h1 className="text-xl font-bold mb-1">
+        日時を選択（キャスト：{girl.name}）
+      </h1>
+      <p className="text-sm text-gray-600 mb-4">
+        コース：{course.name}（{course.base_price}円）
+      </p>
 
-      {/* STEP 1: コース */}
-      {step === "course" && (
-        <div>
-          <h1 className="text-xl font-bold mb-4">コースを選択</h1>
-          {courses.map((course) => (
+      {/* 日付ヘッダー：14日間 横スクロール */}
+      <div className="flex space-x-2 overflow-x-auto pb-2 mb-4 border-b">
+        {days.map((d, idx) => {
+          const isSelected = idx === selectedDayIndex;
+          const weekday = d.getDay();
+          const isSun = weekday === 0;
+          const isSat = weekday === 6;
+
+          const baseText =
+            isSun ? "text-red-500" : isSat ? "text-blue-500" : "text-gray-700";
+
+          const textClass = isSelected ? "text-white" : baseText;
+          const bgClass = isSelected ? "bg-blue-500" : "bg-gray-100";
+
+          return (
             <button
-              key={course.id}
-              onClick={() => {
-                setSelectedCourse(course);
-                setStep("girl");
-              }}
-              className="w-full bg-green-500 text-white p-4 rounded-lg mb-3 flex justify-between"
+              key={idx}
+              onClick={() => setSelectedDayIndex(idx)}
+              className={`flex flex-col items-center justify-center min-w-[56px] px-3 py-2 rounded-md ${bgClass} ${textClass} text-sm font-medium shadow-sm`}
             >
-              <span>{course.name}</span>
-              <span>¥{course.base_price.toLocaleString()}</span>
+              <span className="text-base leading-none">
+                {d.getDate().toString().padStart(2, "0")}
+              </span>
+              <span className="text-xs mt-1">{weekdayLabel(d)}</span>
             </button>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
 
-      {/* STEP 2: キャスト */}
-      {step === "girl" && (
-        <div>
-          <h1 className="text-xl font-bold mb-4">キャストを選択</h1>
-          {girls.map((girl) => (
+      {/* スロット凡例 */}
+      <div className="flex items-center gap-4 text-xs text-gray-600 mb-2">
+        <div className="flex items-center gap-1">
+          <span className="inline-block w-4 h-4 rounded bg-gray-200 border border-gray-300" />
+          シフトなし
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="inline-block w-4 h-4 rounded bg-red-100 border border-red-300" />
+          予約済み
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="inline-block w-4 h-4 rounded bg-green-100 border border-green-400" />
+          予約可能
+        </div>
+      </div>
+
+      {/* 30分刻みスロット（3列グリッド） */}
+      <div className="grid grid-cols-3 gap-2">
+        {slots.map((slot) => {
+          const status = getSlotStatus(slot);
+          const label = formatTime(slot);
+
+          let cls =
+            "w-full py-2 rounded-md text-sm text-center border transition ";
+
+          if (status === "closed") {
+            cls +=
+              "bg-gray-200 text-gray-400 border-gray-300 cursor-not-allowed";
+          } else if (status === "booked") {
+            cls +=
+              "bg-red-100 text-red-600 border-red-300 cursor-not-allowed";
+          } else {
+            // free
+            cls +=
+              "bg-green-100 text-green-700 border-green-400 hover:bg-green-200 cursor-pointer";
+          }
+
+          return (
             <button
-              key={girl.id}
-              onClick={() => {
-                setSelectedGirl(girl);
-                setStep("datetime");
-              }}
-              className="w-full bg-white border p-4 rounded-lg mb-3 flex items-center gap-3"
+              key={slot.toISOString()}
+              className={cls}
+              disabled={status !== "free"}
+              onClick={() => status === "free" && handleClickSlot(slot)}
             >
-              <div className="w-12 h-12 bg-gray-200 rounded-full" />
-              <span>{girl.name}</span>
+              {label}
             </button>
-          ))}
+          );
+        })}
+      </div>
 
-          <button
-            onClick={() => setStep("course")}
-            className="w-full mt-4 bg-gray-300 p-3 rounded-lg"
-          >
-            ← コース選択に戻る
-          </button>
-        </div>
-      )}
-
-      {/* STEP 3: 日時選択 */}
-      {step === "datetime" && selectedCourse && selectedGirl && (
-        <div>
-          <h1 className="text-xl font-bold mb-4">
-            日時を選択（キャスト：{selectedGirl.name}）
-          </h1>
-
-          <TimeCalendar
-            courseMinutes={selectedCourse.duration_minutes}
-            reservedList={reservedList}
-            onSelect={(s, e) => {
-              setSelectedStart(s);
-              setSelectedEnd(e);
-              setStep("confirm");
-            }}
-          />
-
-          <button
-            onClick={() => setStep("girl")}
-            className="w-full mt-6 bg-gray-300 p-3 rounded-lg"
-          >
-            ← キャストに戻る
-          </button>
-        </div>
-      )}
-
-      {/* STEP 4: 確認 */}
-      {step === "confirm" && (
-        <div>
-          <h1 className="text-xl font-bold mb-4">予約内容の確認</h1>
-
-          <div className="bg-white p-4 rounded-lg shadow">
-            <p>■ コース：{selectedCourse.name}</p>
-            <p>■ キャスト：{selectedGirl.name}</p>
-            <p>■ 開始：{dayjs(selectedStart).format("YYYY/MM/DD HH:mm")}</p>
-            <p>■ 終了：{dayjs(selectedEnd).format("YYYY/MM/DD HH:mm")}</p>
-            <p className="font-bold mt-2">
-              ■ 料金：¥{selectedCourse.base_price.toLocaleString()}
-            </p>
-          </div>
-
-          <button
-            onClick={sendReservation}
-            className="w-full mt-6 bg-green-600 text-white p-3 rounded-lg"
-          >
-            仮予約を送信する
-          </button>
-
-          <button
-            onClick={() => setStep("datetime")}
-            className="w-full mt-3 bg-gray-300 p-3 rounded-lg"
-          >
-            ← 日時へ戻る
-          </button>
-        </div>
-      )}
-    </main>
+      {/* 下部：キャストに戻る（ここはお好みで遷移先を変えてOK） */}
+      <div className="mt-6">
+        <button
+          className="w-full py-2 rounded-md border text-sm text-gray-700 hover:bg-gray-50"
+          onClick={() => {
+            // ここは「キャスト一覧」に戻す想定
+            // 実際の戻り先に合わせて URL を修正してください
+            router.back();
+          }}
+        >
+          ← キャストに戻る
+        </button>
+      </div>
+    </div>
   );
 }
