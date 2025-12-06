@@ -1,47 +1,50 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
+import { CheckCircle } from "lucide-react";
 
 export default function CompletePage() {
   const params = useSearchParams();
   const router = useRouter();
 
-  const reservation_id = params.get("reservation_id");
+  const shop_id = params.get("shop_id");
+  const girl_name = params.get("girl_name") ?? "セラピスト";
 
   return (
-    <div className="max-w-lg mx-auto px-4 py-10 text-center">
-      {/* Success icon */}
-      <div className="mx-auto w-24 h-24 rounded-full bg-green-100 flex items-center justify-center mb-6">
-        <span className="text-green-600 text-5xl">✔</span>
-      </div>
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6">
+      
+      {/* ✔ 完了アイコン */}
+      <CheckCircle className="text-green-600 mb-4" size={80} />
 
-      <h1 className="text-3xl font-bold mb-4">予約が完了しました</h1>
+      {/* タイトル */}
+      <h1 className="text-2xl font-bold text-gray-800 mb-2">
+        予約が完了しました
+      </h1>
 
-      <p className="text-gray-600 mb-8">
-        ご予約ありがとうございます。<br />
-        下記の予約番号を大切に保管してください。
+      {/* セラピスト名 */}
+      <p className="text-lg text-gray-600 mb-6">
+        担当セラピスト：<span className="font-semibold">{girl_name}</span>
       </p>
 
-      {/* 予約IDボックス */}
-      <div className="bg-white shadow-lg border border-gray-200 rounded-xl p-4 mb-8">
-        <p className="text-gray-500 text-sm">予約番号</p>
-        <p className="text-2xl font-bold mt-1">{reservation_id}</p>
+      {/* 戻るボタン群 */}
+      <div className="w-full max-w-sm flex flex-col gap-3">
+
+        {/* 店舗トップへ戻る */}
+        <button
+          onClick={() => router.push(`/shops/${shop_id}`)}
+          className="w-full bg-green-600 text-white py-3 rounded-xl text-lg font-bold shadow"
+        >
+          店舗トップへ戻る
+        </button>
+
+        {/* ホームへ戻る */}
+        <button
+          onClick={() => router.push(`/`)}
+          className="w-full bg-gray-200 py-3 rounded-xl text-lg"
+        >
+          ホームへ戻る
+        </button>
       </div>
-
-      {/* 次回予約 */}
-      <button
-        onClick={() => router.push("/")}
-        className="w-full py-3 bg-green-600 text-white rounded-xl text-lg font-bold shadow hover:bg-green-700 transition"
-      >
-        ホームへ戻る
-      </button>
-
-      <button
-        onClick={() => router.push("/reserve")}
-        className="w-full py-3 mt-4 bg-gray-200 text-gray-700 rounded-xl text-lg"
-      >
-        もう一度予約する
-      </button>
     </div>
   );
 }
