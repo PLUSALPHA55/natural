@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import dayjs from "dayjs";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase } from "../../../../lib/supabaseClient";
+
 
 type Props = {
   girlId: string;
