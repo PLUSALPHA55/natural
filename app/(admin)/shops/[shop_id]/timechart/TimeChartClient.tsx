@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { supabase } from "../../../../../lib/supabaseClient";
+
+
+
 import dayjs from "dayjs";
+
 
 // ---- 型定義 ----
 type Girl = {
@@ -55,13 +59,16 @@ export default function TimeChartClient({
 
   // ---------- 女の子 ----------
   const loadGirls = async () => {
-    const { data } = await supabase
-      .from("girls")
-      .select("*")
-      .eq("shop_id", shopId);
+  const { data, error } = await supabase
+    .from("girls")
+    .select("*")
+    .eq("shop_id", shopId);
 
-    if (data) setGirls(data);
-  };
+  console.log("🎀 girls load result:", { shopId, data, error });
+
+  if (data) setGirls(data);
+};
+
 
   // ---------- シフト ----------
   const loadShifts = async () => {
@@ -79,16 +86,18 @@ export default function TimeChartClient({
     const { data } = await supabase
       .from("reservations")
       .select("*")
-      .eq("shop_id", shopId)
+      .eq("shop_id", shopId)      // ← ここが重要
       .eq("date", date);
 
     if (data) setReservations(data);
   };
 
+  // 初回ロード
   useEffect(() => {
     loadGirls();
   }, []);
 
+  // 日付変更 & 初期ロード
   useEffect(() => {
     loadShifts();
     loadReservations();
